@@ -1,19 +1,24 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../services/device_service.dart';
+import '../../services/ble_service.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/widgets/device_card.dart';
+
 import '../../models/device_model.dart';
 import '../../models/location_model.dart';
+
 import '../add_device/add_device_screen.dart';
 import '../device_overview/device_overview_screen.dart';
+
 import 'widgets/dashboard_header.dart';
 import 'widgets/empty_state.dart';
 import 'widgets/stats_chips.dart';
@@ -25,12 +30,26 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen>
+    with WidgetsBindingObserver {
   final DeviceService _deviceService = DeviceService();
+  final BleService _bleService = BleService();
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore =
       FirebaseFirestore.instance;
+
+  // ============================================================
+  // ACTIVE BLE DEVICE
+  // ============================================================
+
+  BluetoothDevice? _activeBluetoothDevice;
+
+  bool _disconnecting = false;
+
+  // ============================================================
+  // DEVICES
+  // ============================================================
 
   List<DeviceModel> devices = [];
   bool isLoading = true;
@@ -45,11 +64,102 @@ class _HomeScreenState extends State<HomeScreen> {
       DocumentSnapshot<Map<String, dynamic>>>?
       _userNameSubscription;
 
+  // ============================================================
+  // INITIALIZATION
+  // ============================================================
+
   @override
   void initState() {
     super.initState();
+
+    WidgetsBinding.instance.addObserver(this);
+
     _loadDevices();
     _listenToUserName();
+  }
+
+  // ============================================================
+  // APP LIFECYCLE
+  // ============================================================
+
+  @override
+  void didChangeAppLifecycleState(
+    AppLifecycleState state,
+  ) {
+    debugPrint(
+      '================================',
+    );
+    debugPrint(
+      'APP LIFECYCLE: $state',
+    );
+    debugPrint(
+      '================================',
+    );
+
+    // Flutter can report different states depending on
+    // how the user leaves the application.
+    //
+    // We disconnect when the application is no longer
+    // actively visible.
+
+    if (state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      debugPrint(
+        'APP NOT ACTIVE → DISCONNECTING SMARTFINDER',
+      );
+
+      _disconnectActiveDevice();
+    }
+  }
+
+  // ============================================================
+  // DISCONNECT ACTIVE BLE DEVICE
+  // ============================================================
+
+  Future<void> _disconnectActiveDevice() async {
+    if (_disconnecting) {
+      return;
+    }
+
+    final device = _activeBluetoothDevice;
+
+    if (device == null) {
+      debugPrint(
+        'No active SmartFinder connection to disconnect.',
+      );
+      return;
+    }
+
+    _disconnecting = true;
+
+    debugPrint(
+      '================================',
+    );
+    debugPrint(
+      'BLE DISCONNECT REQUEST',
+    );
+    debugPrint(
+      'Device: ${device.remoteId}',
+    );
+    debugPrint(
+      '================================',
+    );
+
+    try {
+      await _bleService.disconnectDevice(device);
+
+      debugPrint(
+        'BLE DISCONNECT CALL COMPLETED',
+      );
+    } catch (e) {
+      debugPrint(
+        'BLE DISCONNECT ERROR: $e',
+      );
+    } finally {
+      _activeBluetoothDevice = null;
+      _disconnecting = false;
+    }
   }
 
   // ============================================================
@@ -81,12 +191,10 @@ class _HomeScreenState extends State<HomeScreen> {
           }
         }
 
-        // Fallback to Firebase Auth display name
         if (name.isEmpty) {
           name = user.displayName?.trim() ?? '';
         }
 
-        // Final fallback
         if (name.isEmpty) {
           name = 'User';
         }
@@ -123,7 +231,23 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    debugPrint(
+      'HOME SCREEN DISPOSE',
+    );
+
+    WidgetsBinding.instance.removeObserver(this);
+
     _userNameSubscription?.cancel();
+
+    // Final disconnect attempt.
+    //
+    // IMPORTANT:
+    // This is intentionally called without awaiting because
+    // dispose() cannot be async.
+    _disconnectActiveDevice();
+
+    _bleService.dispose();
+
     super.dispose();
   }
 
@@ -138,8 +262,25 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (!mounted) return;
 
+      final disconnectedDevices =
+          loadedDevices.map((device) {
+        return DeviceModel(
+          id: device.id,
+          name: device.name,
+          connected: false,
+          battery: device.battery,
+          signal: device.signal,
+          lastSeen: device.lastSeen,
+          imagePath: device.imagePath,
+          rssi: device.rssi,
+          bleId: device.bleId,
+          geoLinkerId: device.geoLinkerId,
+          location: device.location,
+        );
+      }).toList();
+
       setState(() {
-        devices = loadedDevices;
+        devices = disconnectedDevices;
         isLoading = false;
       });
     } catch (e) {
@@ -157,6 +298,224 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
     }
+  }
+
+  // ============================================================
+  // CONNECT TO SAVED SMARTFINDER
+  // ============================================================
+
+  Future<void> _connectToSavedDevice(
+    DeviceModel device,
+  ) async {
+    final bleId = device.bleId;
+
+    if (bleId == null || bleId.isEmpty) {
+      if (!mounted) return;
+
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => DeviceOverviewScreen(
+            device: device,
+            onDelete: () {
+              _deleteDevice(device.id);
+            },
+            onRename: (newName) {
+              _renameDevice(
+                device.id,
+                newName,
+              );
+            },
+          ),
+        ),
+      );
+
+      return;
+    }
+
+    // ==========================================================
+    // ASK USER
+    // ==========================================================
+
+    final shouldConnect =
+        await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text(
+            'Connect to SmartFinder?',
+          ),
+          content: Text(
+            'Connect to "${device.name}" through Bluetooth?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(
+                  dialogContext,
+                  false,
+                );
+              },
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(
+                  dialogContext,
+                  true,
+                );
+              },
+              child: const Text('Connect'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldConnect != true) {
+      return;
+    }
+
+    if (!mounted) return;
+
+    // ==========================================================
+    // CONNECTING
+    // ==========================================================
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Connecting to SmartFinder...',
+        ),
+        duration: Duration(seconds: 2),
+      ),
+    );
+
+    bool connected = false;
+
+    BluetoothDevice? bluetoothDevice;
+
+    try {
+      bluetoothDevice =
+          BluetoothDevice.fromId(bleId);
+
+      connected =
+          await _bleService.connectToDevice(
+        bluetoothDevice,
+      );
+
+      if (connected) {
+        _activeBluetoothDevice =
+            bluetoothDevice;
+
+        debugPrint(
+          'ACTIVE BLE DEVICE SAVED: ${bluetoothDevice.remoteId}',
+        );
+      }
+    } catch (e) {
+      debugPrint(
+        'Error connecting to saved SmartFinder: $e',
+      );
+
+      connected = false;
+    }
+
+    if (!mounted) return;
+
+    // ==========================================================
+    // CREATE SESSION DEVICE
+    // ==========================================================
+
+    final sessionDevice = DeviceModel(
+      id: device.id,
+      name: device.name,
+      connected: connected,
+      battery: device.battery,
+      signal: connected
+          ? device.signal
+          : "Not available",
+      lastSeen: connected
+          ? "Just now"
+          : device.lastSeen,
+      imagePath: device.imagePath,
+      rssi: device.rssi,
+      bleId: device.bleId,
+      geoLinkerId: device.geoLinkerId,
+      location: device.location,
+    );
+
+    // ==========================================================
+    // UPDATE DASHBOARD
+    // ==========================================================
+
+    setState(() {
+      final index = devices.indexWhere(
+        (d) => d.id == device.id,
+      );
+
+      if (index != -1) {
+        devices[index] = sessionDevice;
+      }
+    });
+
+    // ==========================================================
+    // SUCCESS
+    // ==========================================================
+
+    if (connected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'SmartFinder connected successfully!',
+          ),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+
+    // ==========================================================
+    // FAILURE
+    // ==========================================================
+
+    if (!connected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Unable to connect. SmartFinder may be out of range.',
+          ),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
+
+    // ==========================================================
+    // OPEN OVERVIEW
+    // ==========================================================
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DeviceOverviewScreen(
+          device: sessionDevice,
+          onDelete: () {
+            _deleteDevice(device.id);
+          },
+          onRename: (newName) {
+            _renameDevice(
+              device.id,
+              newName,
+            );
+          },
+        ),
+      ),
+    );
+
+    // IMPORTANT:
+    //
+    // We do NOT disconnect here.
+    //
+    // The BLE connection must remain active while
+    // the app is open.
   }
 
   // ============================================================
@@ -255,6 +614,7 @@ class _HomeScreenState extends State<HomeScreen> {
       rssi: oldDevice.rssi,
       bleId: oldDevice.bleId,
       geoLinkerId: oldDevice.geoLinkerId,
+      location: oldDevice.location,
     );
 
     try {
@@ -301,9 +661,9 @@ class _HomeScreenState extends State<HomeScreen> {
       id:
           "esp32${DateTime.now().millisecondsSinceEpoch}",
       name: result["name"] ?? "NO NAME",
-      connected: true,
+      connected: false,
       battery: 82,
-      signal: "Excellent",
+      signal: "Not available",
       lastSeen: "Just now",
       imagePath: result["imagePath"],
       bleId: result["bleId"],
@@ -370,6 +730,10 @@ class _HomeScreenState extends State<HomeScreen> {
       return "All your devices are connected.";
     }
 
+    if (connected == 0) {
+      return "Your devices are disconnected.";
+    }
+
     return "$connected of ${devices.length} devices are connected.";
   }
 
@@ -400,6 +764,7 @@ class _HomeScreenState extends State<HomeScreen> {
           isDark
               ? const Color(0xFF121212)
               : Colors.white,
+
       body: Container(
         decoration: BoxDecoration(
           gradient: isDark
@@ -432,12 +797,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                 ),
         ),
+
         child: SafeArea(
           child: Padding(
             padding: EdgeInsets.symmetric(
               horizontal:
                   Responsive.w(context, 0.03),
             ),
+
             child: Column(
               children: [
                 SizedBox(
@@ -478,6 +845,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       0.018,
                     ),
                   ),
+
                   decoration: BoxDecoration(
                     gradient: isDark
                         ? const LinearGradient(
@@ -500,6 +868,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               Color(0xFFF4F0FF),
                             ],
                           ),
+
                     borderRadius:
                         BorderRadius.circular(
                       Responsive.radius(
@@ -507,6 +876,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         22,
                       ),
                     ),
+
                     border: Border.all(
                       color: isDark
                           ? const Color(
@@ -518,15 +888,18 @@ class _HomeScreenState extends State<HomeScreen> {
                       width: 1,
                     ),
                   ),
+
                   child: Column(
                     crossAxisAlignment:
                         CrossAxisAlignment.start,
+
                     children: [
                       Text(
                         "${getGreeting()}, $userName",
                         maxLines: 1,
                         overflow:
                             TextOverflow.ellipsis,
+
                         style:
                             AppTextStyles
                                 .sectionTitle(
@@ -560,6 +933,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         maxLines: 2,
                         overflow:
                             TextOverflow.ellipsis,
+
                         style:
                             AppTextStyles.subtitle(
                           context,
@@ -616,6 +990,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: ListView.builder(
                       itemCount:
                           devices.length,
+
                       itemBuilder:
                           (context, index) {
                         final device =
@@ -624,39 +999,25 @@ class _HomeScreenState extends State<HomeScreen> {
                         return DeviceCard(
                           deviceName:
                               device.name,
+
                           imagePath:
                               device.imagePath,
+
                           connected:
                               device.connected,
+
                           battery:
                               device.battery,
+
                           lastSeen:
                               device.lastSeen,
+
                           signal:
                               device.signal,
 
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) =>
-                                    DeviceOverviewScreen(
-                                  device:
-                                      device,
-                                  onDelete: () {
-                                    _deleteDevice(
-                                      device.id,
-                                    );
-                                  },
-                                  onRename:
-                                      (newName) {
-                                    _renameDevice(
-                                      device.id,
-                                      newName,
-                                    );
-                                  },
-                                ),
-                              ),
+                          onTap: () async {
+                            await _connectToSavedDevice(
+                              device,
                             );
                           },
 

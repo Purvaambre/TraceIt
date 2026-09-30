@@ -27,12 +27,9 @@ class BleScanScreen extends StatefulWidget {
 }
 
 class _BleScanScreenState extends State<BleScanScreen> {
-  // ---- UNCHANGED LOGIC ----
   final BleService _bleService = BleService();
 
-
   List<ScanResult> _scanResults = [];
-
 
   final Map<String, Map<String, dynamic>> _fakeDevices = {
     'CHARM_TEST': {
@@ -47,25 +44,20 @@ class _BleScanScreenState extends State<BleScanScreen> {
     },
   };
 
-
   bool _isScanning = false;
   String? _scanError;
 
   @override
   void initState() {
     super.initState();
-
-
     _startBleScan();
   }
-
 
   @override
   void dispose() {
     _bleService.dispose();
     super.dispose();
   }
-
 
   Future<void> _startBleScan() async {
     setState(() {
@@ -74,30 +66,24 @@ class _BleScanScreenState extends State<BleScanScreen> {
       _scanError = null;
     });
 
-
     final permissionsGranted =
         await _bleService.requestPermissions();
 
-
     if (!permissionsGranted) {
       if (!mounted) return;
-
 
       setState(() {
         _isScanning = false;
         _scanError = 'Bluetooth permission is required.';
       });
 
-
       return;
     }
-
 
     try {
       await for (final results
           in _bleService.scanForDevices()) {
         if (!mounted) return;
-
 
         setState(() {
           _scanResults = results;
@@ -106,9 +92,9 @@ class _BleScanScreenState extends State<BleScanScreen> {
     } catch (e) {
       if (!mounted) return;
 
-
       setState(() {
-        _scanError = 'Unable to scan for nearby devices.';
+        _scanError =
+            'Unable to scan for nearby devices.';
       });
     } finally {
       if (mounted) {
@@ -140,21 +126,114 @@ class _BleScanScreenState extends State<BleScanScreen> {
       return "Weak Signal";
     }
   }
-  // ---- END UNCHANGED LOGIC ----
 
-  // ---- purely visual helper: color per signal strength ----
   Color _signalColor(int rssi) {
-    if (rssi >= -55) return const Color(0xFF16A34A); // very close - green
-    if (rssi >= -70) return _blue; // close - blue
-    if (rssi >= -85) return const Color(0xFFF59E0B); // far - amber
-    return const Color(0xFFDC2626); // weak - red
+    if (rssi >= -55) {
+      return const Color(0xFF16A34A);
+    }
+
+    if (rssi >= -70) {
+      return _blue;
+    }
+
+    if (rssi >= -85) {
+      return const Color(0xFFF59E0B);
+    }
+
+    return const Color(0xFFDC2626);
   }
 
   IconData _signalIcon(int rssi) {
-    if (rssi >= -55) return Icons.signal_cellular_alt;
-    if (rssi >= -70) return Icons.signal_cellular_alt;
-    if (rssi >= -85) return Icons.signal_cellular_alt_2_bar;
+    if (rssi >= -55) {
+      return Icons.signal_cellular_alt;
+    }
+
+    if (rssi >= -70) {
+      return Icons.signal_cellular_alt;
+    }
+
+    if (rssi >= -85) {
+      return Icons.signal_cellular_alt_2_bar;
+    }
+
     return Icons.signal_cellular_alt_1_bar;
+  }
+
+  // ------------------------------------------------------------
+  // CONNECT TO SMARTFINDER
+  // ADD DEVICE ONLY
+  //
+  // Connects to the SmartFinder, verifies the expected
+  // service/characteristic, then disconnects.
+  //
+  // IMPORTANT:
+  // No FIND command is sent here.
+  // ------------------------------------------------------------
+
+  Future<void> _connectToSmartFinder(
+    BluetoothDevice bluetoothDevice,
+    String deviceName,
+    String bleId,
+    int rssi,
+  ) async {
+    if (_isScanning) {
+      await _bleService.stopScan();
+    }
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Connecting to SmartFinder...',
+        ),
+        duration: Duration(seconds: 2),
+      ),
+    );
+
+    final success =
+        await _bleService.connectToDevice(
+      bluetoothDevice,
+    );
+
+    if (!mounted) return;
+
+    if (success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'SmartFinder connected successfully!',
+          ),
+          duration: Duration(seconds: 2),
+        ),
+      );
+
+      // Disconnect after verifying the device.
+      await _bleService.disconnectDevice(
+        bluetoothDevice,
+      );
+
+      if (!mounted) return;
+
+      // Return the device information to the previous screen.
+      Navigator.pop(
+        context,
+        {
+          "name": deviceName,
+          "id": bleId,
+          "rssi": rssi,
+        },
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Unable to connect to SmartFinder.',
+          ),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   @override
@@ -180,31 +259,44 @@ class _BleScanScreenState extends State<BleScanScreen> {
               vertical: Responsive.h(context, 0.01),
             ),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment:
+                  CrossAxisAlignment.start,
               children: [
-                SizedBox(height: Responsive.h(context, 0.015)),
+                SizedBox(
+                  height: Responsive.h(context, 0.015),
+                ),
 
-                // ---- Header ----
+                // ------------------------------------------------
+                // HEADER
+                // ------------------------------------------------
+
                 Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
+                  crossAxisAlignment:
+                      CrossAxisAlignment.center,
                   children: [
                     IconButton(
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: () =>
+                          Navigator.pop(context),
                       icon: const Icon(
                         Icons.arrow_back_ios_new_rounded,
                         color: _textDark,
                       ),
                       iconSize: 18,
                       padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
+                      constraints:
+                          const BoxConstraints(
                         minWidth: 32,
                         minHeight: 32,
                       ),
                     ),
+
                     const SizedBox(width: 8),
+
                     Text(
                       'Select Charm',
-                      style: AppTextStyles.heading(context).copyWith(
+                      style:
+                          AppTextStyles.heading(context)
+                              .copyWith(
                         color: _textDark,
                         fontWeight: FontWeight.w800,
                       ),
@@ -212,35 +304,56 @@ class _BleScanScreenState extends State<BleScanScreen> {
                   ],
                 ),
 
-                SizedBox(height: Responsive.h(context, 0.03)),
+                SizedBox(
+                  height: Responsive.h(context, 0.03),
+                ),
 
-                // ---- Bluetooth badge + section title ----
+                // ------------------------------------------------
+                // BLUETOOTH ICON + TITLE
+                // ------------------------------------------------
+
                 Center(
                   child: Column(
                     children: [
                       Container(
-                        padding: EdgeInsets.all(Responsive.w(context, 0.05)),
+                        padding: EdgeInsets.all(
+                          Responsive.w(context, 0.05),
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.white,
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                              color: _blue.withValues(alpha: 0.15),
+                              color: _blue.withValues(
+                                alpha: 0.15,
+                              ),
                               blurRadius: 16,
-                              offset: const Offset(0, 6),
+                              offset:
+                                  const Offset(0, 6),
                             ),
                           ],
                         ),
                         child: Icon(
                           Icons.bluetooth_searching,
-                          size: Responsive.font(context, 7),
+                          size: Responsive.font(
+                            context,
+                            7,
+                          ),
                           color: _blue,
                         ),
                       ),
-                      SizedBox(height: Responsive.h(context, 0.016)),
+
+                      SizedBox(
+                        height:
+                            Responsive.h(context, 0.016),
+                      ),
+
                       Text(
                         "Nearby Charms",
-                        style: AppTextStyles.sectionTitle(context).copyWith(
+                        style:
+                            AppTextStyles.sectionTitle(
+                          context,
+                        ).copyWith(
                           color: _textDark,
                           fontWeight: FontWeight.w800,
                         ),
@@ -249,157 +362,316 @@ class _BleScanScreenState extends State<BleScanScreen> {
                   ),
                 ),
 
-                SizedBox(height: Responsive.h(context, 0.028)),
+                SizedBox(
+                  height: Responsive.h(context, 0.028),
+                ),
 
-                // ---- Device list ----
+                // ------------------------------------------------
+                // DEVICE LIST
+                // ------------------------------------------------
+
                 Expanded(
                   child: ListView.separated(
-                    physics: const BouncingScrollPhysics(),
-                    itemCount: _scanResults.length + _fakeDevices.length,
-                    separatorBuilder: (context, index) =>
-                        SizedBox(height: Responsive.h(context, 0.014)),
-                    itemBuilder: (context, index) {
-                      final isFakeDevice = index >= _scanResults.length;
+                    physics:
+                        const BouncingScrollPhysics(),
 
+                    itemCount:
+                        _scanResults.length +
+                            _fakeDevices.length,
+
+                    separatorBuilder:
+                        (context, index) =>
+                            SizedBox(
+                      height:
+                          Responsive.h(context, 0.014),
+                    ),
+
+                    itemBuilder:
+                        (context, index) {
+                      final isFakeDevice =
+                          index >= _scanResults.length;
 
                       String deviceName;
                       String bleId;
                       int rssi;
 
+                      BluetoothDevice?
+                          bluetoothDevice;
+
+                      // ------------------------------------------
+                      // FAKE DEVICE
+                      // ------------------------------------------
 
                       if (isFakeDevice) {
-                        final fakeDeviceIndex = index - _scanResults.length;
-                        final fakeDevice = _fakeDevices.values.elementAt(fakeDeviceIndex);
+                        final fakeDeviceIndex =
+                            index -
+                                _scanResults.length;
 
+                        final fakeDevice =
+                            _fakeDevices.values
+                                .elementAt(
+                          fakeDeviceIndex,
+                        );
 
-                        deviceName = fakeDevice['name'] as String;
-                        bleId = fakeDevice['id'] as String;
-                        rssi = fakeDevice['rssi'] as int;
-                      } else {
-                        final result = _scanResults[index];
-                        final bluetoothDevice = result.device;
+                        deviceName =
+                            fakeDevice['name']
+                                as String;
 
+                        bleId =
+                            fakeDevice['id']
+                                as String;
 
-                        deviceName = bluetoothDevice.platformName.isNotEmpty
-                            ? bluetoothDevice.platformName
-                            : 'Charm';
+                        rssi =
+                            fakeDevice['rssi']
+                                as int;
+                      }
 
+                      // ------------------------------------------
+                      // REAL BLE DEVICE
+                      // ------------------------------------------
 
-                        bleId = bluetoothDevice.remoteId.str;
+                      else {
+                        final result =
+                            _scanResults[index];
+
+                        bluetoothDevice =
+                            result.device;
+
+                        deviceName =
+                            bluetoothDevice
+                                    .platformName
+                                    .isNotEmpty
+                                ? bluetoothDevice
+                                    .platformName
+                                : 'Charm';
+
+                        bleId =
+                            bluetoothDevice
+                                .remoteId
+                                .str;
+
                         rssi = result.rssi;
                       }
 
-                      final assignedDevice = _getAssignedDevice(bleId);
-                      final isAssigned = assignedDevice != null;
+                      final assignedDevice =
+                          _getAssignedDevice(bleId);
+
+                      final isAssigned =
+                          assignedDevice != null;
+
                       final statusColor =
-                          isAssigned ? const Color(0xFF16A34A) : _signalColor(rssi);
+                          isAssigned
+                              ? const Color(
+                                  0xFF16A34A,
+                                )
+                              : _signalColor(rssi);
+
+                      // ------------------------------------------
+                      // DEVICE CARD
+                      // ------------------------------------------
 
                       return Material(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius:
+                            BorderRadius.circular(16),
                         elevation: 0,
+
                         child: InkWell(
-                          borderRadius: BorderRadius.circular(16),
-                          onTap: isAssigned
-                              ? null
-                              : () {
-                                  Navigator.pop(
-                                    context,
-                                    {
-                                      "name": deviceName,
-                                      "id": bleId,
-                                      "rssi": rssi,
+                          borderRadius:
+                              BorderRadius.circular(16),
+
+                          // --------------------------------------
+                          // REAL DEVICE:
+                          // CONNECT + VERIFY + DISCONNECT
+                          //
+                          // NO FIND COMMAND
+                          //
+                          // FAKE DEVICE:
+                          // NO ACTION
+                          //
+                          // ASSIGNED:
+                          // NO ACTION
+                          // --------------------------------------
+
+                          onTap:
+                              isAssigned ||
+                                      isFakeDevice ||
+                                      bluetoothDevice ==
+                                          null
+                                  ? null
+                                  : () async {
+                                      await _connectToSmartFinder(
+                                        bluetoothDevice!,
+                                        deviceName,
+                                        bleId,
+                                        rssi,
+                                      );
                                     },
-                                  );
-                                },
+
                           child: Container(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: Responsive.w(context, 0.04),
-                              vertical: Responsive.h(context, 0.016),
+                            padding:
+                                EdgeInsets.symmetric(
+                              horizontal:
+                                  Responsive.w(
+                                context,
+                                0.04,
+                              ),
+                              vertical:
+                                  Responsive.h(
+                                context,
+                                0.016,
+                              ),
                             ),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
+
+                            decoration:
+                                BoxDecoration(
+                              borderRadius:
+                                  BorderRadius.circular(
+                                16,
+                              ),
+
+                              border:
+                                  Border.all(
                                 color: isAssigned
-                                    ? const Color(0xFFBBF7D0)
+                                    ? const Color(
+                                        0xFFBBF7D0,
+                                      )
                                     : _border,
                                 width: 1,
                               ),
+
                               color: isAssigned
-                                  ? const Color(0xFFF0FDF4)
+                                  ? const Color(
+                                      0xFFF0FDF4,
+                                    )
                                   : Colors.white,
+
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.03),
+                                  color: Colors.black
+                                      .withValues(
+                                    alpha: 0.03,
+                                  ),
                                   blurRadius: 10,
-                                  offset: const Offset(0, 4),
+                                  offset:
+                                      const Offset(
+                                    0,
+                                    4,
+                                  ),
                                 ),
                               ],
                             ),
+
                             child: Row(
                               children: [
+                                // --------------------------------
+                                // ICON
+                                // --------------------------------
+
                                 Container(
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
+                                  padding:
+                                      const EdgeInsets
+                                          .all(10),
+                                  decoration:
+                                      BoxDecoration(
                                     color: isAssigned
-                                        ? Colors.green.shade50
+                                        ? Colors
+                                            .green
+                                            .shade50
                                         : _softBlue,
-                                    shape: BoxShape.circle,
+                                    shape:
+                                        BoxShape.circle,
                                   ),
+
                                   child: Icon(
                                     isAssigned
-                                        ? Icons.check_circle
+                                        ? Icons
+                                            .check_circle
                                         : Icons.bluetooth,
-                                    color: isAssigned ? Colors.green : _blue,
+                                    color: isAssigned
+                                        ? Colors.green
+                                        : _blue,
                                     size: 20,
                                   ),
                                 ),
+
                                 const SizedBox(width: 14),
+
+                                // --------------------------------
+                                // DEVICE INFO
+                                // --------------------------------
+
                                 Expanded(
                                   child: Column(
                                     crossAxisAlignment:
-                                        CrossAxisAlignment.start,
+                                        CrossAxisAlignment
+                                            .start,
                                     children: [
                                       Text(
                                         isAssigned
-                                            ? assignedDevice.name
+                                            ? assignedDevice!
+                                                .name
                                             : deviceName,
-                                        style: AppTextStyles.sectionTitle(
-                                                context)
-                                            .copyWith(
+                                        style:
+                                            AppTextStyles
+                                                .sectionTitle(
+                                          context,
+                                        ).copyWith(
                                           color: _textDark,
-                                          fontWeight: FontWeight.w700,
+                                          fontWeight:
+                                              FontWeight
+                                                  .w700,
                                           fontSize: 14.5,
                                         ),
                                       ),
-                                      const SizedBox(height: 3),
+
+                                      const SizedBox(
+                                        height: 3,
+                                      ),
+
                                       Row(
                                         children: [
                                           if (!isAssigned)
                                             Container(
                                               width: 6,
                                               height: 6,
-                                              margin: const EdgeInsets.only(
-                                                  right: 6),
-                                              decoration: BoxDecoration(
-                                                color: statusColor,
-                                                shape: BoxShape.circle,
+                                              margin:
+                                                  const EdgeInsets
+                                                      .only(
+                                                right: 6,
+                                              ),
+                                              decoration:
+                                                  BoxDecoration(
+                                                color:
+                                                    statusColor,
+                                                shape:
+                                                    BoxShape
+                                                        .circle,
                                               ),
                                             ),
+
                                           Text(
                                             isAssigned
                                                 ? "Already connected"
                                                 : isFakeDevice
                                                     ? "Test device • $rssi dBm"
                                                     : "${_getSignalStatus(rssi)} • $rssi dBm",
-                                            style: TextStyle(
-                                              color: isAssigned
-                                                  ? const Color(0xFF15803D)
-                                                  : _textGrey,
-                                              fontSize: 12.5,
-                                              fontWeight: isAssigned
-                                                  ? FontWeight.w600
-                                                  : FontWeight.w400,
+                                            style:
+                                                TextStyle(
+                                              color:
+                                                  isAssigned
+                                                      ? const Color(
+                                                          0xFF15803D,
+                                                        )
+                                                      : _textGrey,
+                                              fontSize:
+                                                  12.5,
+                                              fontWeight:
+                                                  isAssigned
+                                                      ? FontWeight
+                                                          .w600
+                                                      : FontWeight
+                                                          .w400,
                                             ),
                                           ),
                                         ],
@@ -407,17 +679,37 @@ class _BleScanScreenState extends State<BleScanScreen> {
                                     ],
                                   ),
                                 ),
+
+                                // --------------------------------
+                                // RIGHT ICON
+                                // --------------------------------
+
                                 isAssigned
                                     ? Icon(
-                                        Icons.lock_outline,
-                                        color: Colors.grey.shade400,
+                                        Icons
+                                            .lock_outline,
+                                        color: Colors
+                                            .grey
+                                            .shade400,
                                         size: 18,
                                       )
-                                    : Icon(
-                                        Icons.arrow_forward_ios_rounded,
-                                        color: Colors.grey.shade400,
-                                        size: 14,
-                                      ),
+                                    : isFakeDevice
+                                        ? Icon(
+                                            Icons
+                                                .science_outlined,
+                                            color: Colors
+                                                .grey
+                                                .shade400,
+                                            size: 18,
+                                          )
+                                        : Icon(
+                                            Icons
+                                                .arrow_forward_ios_rounded,
+                                            color: Colors
+                                                .grey
+                                                .shade400,
+                                            size: 14,
+                                          ),
                               ],
                             ),
                           ),
@@ -426,6 +718,66 @@ class _BleScanScreenState extends State<BleScanScreen> {
                     },
                   ),
                 ),
+
+                // ------------------------------------------------
+                // SCAN ERROR
+                // ------------------------------------------------
+
+                if (_scanError != null)
+                  Padding(
+                    padding:
+                        const EdgeInsets.only(
+                      top: 8,
+                      bottom: 12,
+                    ),
+                    child: Center(
+                      child: Text(
+                        _scanError!,
+                        style:
+                            const TextStyle(
+                          color: Colors.red,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ),
+
+                // ------------------------------------------------
+                // SCANNING INDICATOR
+                // ------------------------------------------------
+
+                if (_isScanning)
+                  Padding(
+                    padding:
+                        const EdgeInsets.only(
+                      top: 8,
+                      bottom: 12,
+                    ),
+                    child: Center(
+                      child: Row(
+                        mainAxisSize:
+                            MainAxisSize.min,
+                        children: const [
+                          SizedBox(
+                            width: 16,
+                            height: 16,
+                            child:
+                                CircularProgressIndicator(
+                              strokeWidth: 2,
+                            ),
+                          ),
+                          SizedBox(width: 10),
+                          Text(
+                            "Scanning for nearby charms...",
+                            style: TextStyle(
+                              color: _textGrey,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
